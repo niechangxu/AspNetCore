@@ -298,6 +298,30 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 output.Complete();
             }
         }
+
+        public async Task UploadDoesWorkOnComplete(ChannelReader<string> source)
+        {
+            var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Context.Items[nameof(UploadDoesWorkOnComplete)] = tcs.Task;
+
+            try
+            {
+                while (await source.WaitToReadAsync())
+                {
+                    while (source.TryRead(out var item))
+                    {
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+            finally
+            {
+                tcs.TrySetResult(42);
+            }
+        }
     }
 
     public abstract class TestHub : Hub
@@ -904,6 +928,36 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await token.WaitForCancellationAsync();
                 channel.Writer.TryComplete();
                 _tcsService.EndMethod.SetResult(null);
+            });
+
+            return channel.Reader;
+        }
+
+        public ChannelReader<int> CancelableStreamNullableParameter(int x, string y, CancellationToken token)
+        {
+            var channel = Channel.CreateBounded<int>(10);
+
+            Task.Run(async () =>
+            {
+                _tcsService.StartedMethod.SetResult(x);
+                await token.WaitForCancellationAsync();
+                channel.Writer.TryComplete();
+                _tcsService.EndMethod.SetResult(y);
+            });
+
+            return channel.Reader;
+        }
+
+        public ChannelReader<int> StreamNullableParameter(int x, int? input)
+        {
+            var channel = Channel.CreateBounded<int>(10);
+
+            Task.Run(() =>
+            {
+                _tcsService.StartedMethod.SetResult(x);
+                channel.Writer.TryComplete();
+                _tcsService.EndMethod.SetResult(input);
+                return Task.CompletedTask;
             });
 
             return channel.Reader;

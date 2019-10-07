@@ -3,9 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.ExceptionServices;
-using System.Text.Encodings.Web;
-using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Web.Rendering;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,18 +15,13 @@ namespace Microsoft.AspNetCore.Components.Server.Circuits
 {
     internal class TestCircuitHost : CircuitHost
     {
-        private TestCircuitHost(string circuitId, IServiceScope scope, CircuitClientProxy client, RemoteRenderer renderer, IReadOnlyList<ComponentDescriptor> descriptors, RemoteJSRuntime jsRuntime, CircuitHandler[] circuitHandlers, ILogger logger)
-            : base(circuitId, scope, client, renderer, descriptors, jsRuntime, circuitHandlers, logger)
+        private TestCircuitHost(CircuitId circuitId, IServiceScope scope, CircuitOptions options, CircuitClientProxy client, RemoteRenderer renderer, IReadOnlyList<ComponentDescriptor> descriptors, RemoteJSRuntime jsRuntime, CircuitHandler[] circuitHandlers, ILogger logger)
+            : base(circuitId, scope, options, client, renderer, descriptors, jsRuntime, circuitHandlers, logger)
         {
-        }
-
-        protected override void OnHandlerError(CircuitHandler circuitHandler, string handlerMethod, Exception ex)
-        {
-            ExceptionDispatchInfo.Capture(ex).Throw();
         }
 
         public static CircuitHost Create(
-            string circuitId = null,
+            CircuitId? circuitId = null,
             IServiceScope serviceScope = null,
             RemoteRenderer remoteRenderer = null,
             CircuitHandler[] handlers = null,
@@ -45,16 +37,15 @@ namespace Microsoft.AspNetCore.Components.Server.Circuits
                     serviceScope.ServiceProvider ?? Mock.Of<IServiceProvider>(),
                     NullLoggerFactory.Instance,
                     new CircuitOptions(),
-                    jsRuntime,
                     clientProxy,
-                    HtmlEncoder.Default,
                     NullLogger.Instance);
             }
 
             handlers = handlers ?? Array.Empty<CircuitHandler>();
             return new TestCircuitHost(
-                circuitId ?? Guid.NewGuid().ToString(),
+                circuitId is null ? new CircuitId(Guid.NewGuid().ToString(), Guid.NewGuid().ToString()) : circuitId.Value,
                 serviceScope,
+                new CircuitOptions(),
                 clientProxy,
                 remoteRenderer,
                 new List<ComponentDescriptor>(),

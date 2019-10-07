@@ -14,7 +14,7 @@ using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.SignalR.Protocol;
 using Microsoft.AspNetCore.SignalR.Tests;
-using Microsoft.AspNetCore.Testing.xunit;
+using Microsoft.AspNetCore.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
@@ -101,6 +101,71 @@ namespace Microsoft.AspNetCore.SignalR.Client.FunctionalTests
                     var result = await connection.InvokeAsync<string>(nameof(TestHub.HelloWorld)).OrTimeout();
 
                     Assert.Equal("Hello World!", result);
+                }
+                catch (Exception ex)
+                {
+                    LoggerFactory.CreateLogger<HubConnectionTests>().LogError(ex, "{ExceptionType} from test", ex.GetType().FullName);
+                    throw;
+                }
+                finally
+                {
+                    await connection.DisposeAsync().OrTimeout();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task ServerRejectsClientWithOldProtocol()
+        {
+            bool ExpectedError(WriteContext writeContext)
+            {
+                return writeContext.LoggerName == typeof(HttpConnection).FullName &&
+                    writeContext.EventId.Name == "ErrorWithNegotiation";
+            }
+
+            var protocol = HubProtocols["json"];
+            using (StartServer<Startup>(out var server, ExpectedError))
+            {
+                var connectionBuilder = new HubConnectionBuilder()
+                    .WithLoggerFactory(LoggerFactory)
+                    .WithUrl(server.Url + "/negotiateProtocolVersion12", HttpTransportType.LongPolling);
+                connectionBuilder.Services.AddSingleton(protocol);
+
+                var connection = connectionBuilder.Build();
+
+                try
+                {
+                    var ex = await Assert.ThrowsAnyAsync<Exception>(() => connection.StartAsync()).OrTimeout();
+                    Assert.Equal("The client requested version '1', but the server does not support this version.", ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    LoggerFactory.CreateLogger<HubConnectionTests>().LogError(ex, "{ExceptionType} from test", ex.GetType().FullName);
+                    throw;
+                }
+                finally
+                {
+                    await connection.DisposeAsync().OrTimeout();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task ClientCanConnectToServerWithLowerMinimumProtocol()
+        {
+            var protocol = HubProtocols["json"];
+            using (StartServer<Startup>(out var server))
+            {
+                var connectionBuilder = new HubConnectionBuilder()
+                    .WithLoggerFactory(LoggerFactory)
+                    .WithUrl(server.Url + "/negotiateProtocolVersionNegative", HttpTransportType.LongPolling);
+                connectionBuilder.Services.AddSingleton(protocol);
+
+                var connection = connectionBuilder.Build();
+
+                try
+                {
+                    await connection.StartAsync().OrTimeout();
                 }
                 catch (Exception ex)
                 {
@@ -1401,6 +1466,118 @@ namespace Microsoft.AspNetCore.SignalR.Client.FunctionalTests
                     await hubConnection.StartAsync().OrTimeout();
                     var headerValues = await hubConnection.InvokeAsync<string[]>(nameof(TestHub.GetHeaderValues), new[] { "X-test", "X-42" }).OrTimeout();
                     Assert.Equal(new[] { "42", "test" }, headerValues);
+                }
+                catch (Exception ex)
+                {
+                    LoggerFactory.CreateLogger<HubConnectionTests>().LogError(ex, "{ExceptionType} from test", ex.GetType().FullName);
+                    throw;
+                }
+                finally
+                {
+                    await hubConnection.DisposeAsync().OrTimeout();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task UserAgentIsSet()
+        {
+            using (StartServer<Startup>(out var server))
+            {
+                var hubConnection = new HubConnectionBuilder()
+                    .WithLoggerFactory(LoggerFactory)
+                    .WithUrl(server.Url + "/default", HttpTransportType.LongPolling, options =>
+                    {
+                        options.Headers["X-test"] = "42";
+                        options.Headers["X-42"] = "test";
+                    })
+                    .Build();
+                try
+                {
+                    await hubConnection.StartAsync().OrTimeout();
+                    var headerValues = await hubConnection.InvokeAsync<string[]>(nameof(TestHub.GetHeaderValues), new[] { "User-Agent" }).OrTimeout();
+                    Assert.NotNull(headerValues);
+                    Assert.Single(headerValues);
+
+                    var userAgent = headerValues[0];
+
+                    Assert.StartsWith("Microsoft SignalR/", userAgent);
+
+                    var majorVersion = typeof(HttpConnection).Assembly.GetName().Version.Major;
+                    var minorVersion = typeof(HttpConnection).Assembly.GetName().Version.Minor;
+
+                    Assert.Contains($"{majorVersion}.{minorVersion}", userAgent);
+
+                }
+                catch (Exception ex)
+                {
+                    LoggerFactory.CreateLogger<HubConnectionTests>().LogError(ex, "{ExceptionType} from test", ex.GetType().FullName);
+                    throw;
+                }
+                finally
+                {
+                    await hubConnection.DisposeAsync().OrTimeout();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task UserAgentCanBeCleared()
+        {
+            using (StartServer<Startup>(out var server))
+            {
+                var hubConnection = new HubConnectionBuilder()
+                    .WithLoggerFactory(LoggerFactory)
+                    .WithUrl(server.Url + "/default", HttpTransportType.LongPolling, options =>
+                    {
+                        options.Headers["User-Agent"] = "";
+                    })
+                    .Build();
+                try
+                {
+                    await hubConnection.StartAsync().OrTimeout();
+                    var headerValues = await hubConnection.InvokeAsync<string[]>(nameof(TestHub.GetHeaderValues), new[] { "User-Agent" }).OrTimeout();
+                    Assert.NotNull(headerValues);
+                    Assert.Single(headerValues);
+
+                    var userAgent = headerValues[0];
+
+                    Assert.Null(userAgent);
+                }
+                catch (Exception ex)
+                {
+                    LoggerFactory.CreateLogger<HubConnectionTests>().LogError(ex, "{ExceptionType} from test", ex.GetType().FullName);
+                    throw;
+                }
+                finally
+                {
+                    await hubConnection.DisposeAsync().OrTimeout();
+                }
+            }
+        }
+
+        [Fact]
+        public async Task UserAgentCanBeSet()
+        {
+            using (StartServer<Startup>(out var server))
+            {
+                var hubConnection = new HubConnectionBuilder()
+                    .WithLoggerFactory(LoggerFactory)
+                    .WithUrl(server.Url + "/default", HttpTransportType.LongPolling, options =>
+                    {
+                        options.Headers["User-Agent"] = "User Value";
+                    })
+                    .Build();
+                try
+                {
+                    await hubConnection.StartAsync().OrTimeout();
+                    var headerValues = await hubConnection.InvokeAsync<string[]>(nameof(TestHub.GetHeaderValues), new[] { "User-Agent" }).OrTimeout();
+                    Assert.NotNull(headerValues);
+                    Assert.Single(headerValues);
+
+                    var userAgent = headerValues[0];
+
+                    Assert.Equal("User Value", userAgent);
                 }
                 catch (Exception ex)
                 {

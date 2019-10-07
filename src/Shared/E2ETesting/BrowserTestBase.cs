@@ -21,6 +21,11 @@ namespace Microsoft.AspNetCore.E2ETesting
         private static readonly AsyncLocal<ILogs> _logs = new AsyncLocal<ILogs>();
         private static readonly AsyncLocal<ITestOutputHelper> _output = new AsyncLocal<ITestOutputHelper>();
 
+        // Limit the number of concurrent browser tests.
+        private readonly static int MaxConcurrentBrowsers = Environment.ProcessorCount * 2;
+        private static readonly SemaphoreSlim _semaphore = new SemaphoreSlim(MaxConcurrentBrowsers);
+        private bool _semaphoreHeld;
+
         public BrowserTestBase(BrowserFixture browserFixture, ITestOutputHelper output)
         {
             BrowserFixture = browserFixture;
@@ -39,6 +44,11 @@ namespace Microsoft.AspNetCore.E2ETesting
 
         public Task DisposeAsync()
         {
+            if (_semaphoreHeld)
+            {
+                _semaphore.Release();
+            }
+
             return Task.CompletedTask;
         }
 
@@ -49,77 +59,25 @@ namespace Microsoft.AspNetCore.E2ETesting
 
         public virtual async Task InitializeAsync(string isolationContext)
         {
-            var (browser, logs) = await BrowserFixture.GetOrCreateBrowserAsync(Output, isolationContext);
-            _asyncBrowser.Value = browser;
-            _logs.Value = logs;
-
-            Browser = browser;
+            await InitializeBrowser(isolationContext);
 
             InitializeAsyncCore();
         }
 
         protected virtual void InitializeAsyncCore()
         {
-            // Clear logs - we check these during tests in some cases.
-            // Make sure each test starts clean.
-            ((IJavaScriptExecutor)Browser).ExecuteScript("console.clear()");
         }
 
-        protected IWebElement WaitUntilExists(By findBy, int timeoutSeconds = 10, bool throwOnError = false)
+        protected async Task InitializeBrowser(string isolationContext)
         {
-            List<LogEntry> errors = null;
-            IWebElement result = null;
-            new WebDriverWait(Browser, TimeSpan.FromSeconds(timeoutSeconds)).Until(driver =>
-            {
-                if (throwOnError && Browser.Manage().Logs.AvailableLogTypes.Contains(LogType.Browser))
-                {
-                    // Fail-fast if any errors were logged to the console.
-                    var log = Browser.Manage().Logs.GetLog(LogType.Browser);
-                    errors = log.Where(IsError).ToList();
-                    if (errors.Count > 0)
-                    {
-                        return true;
-                    }
-                }
+            await _semaphore.WaitAsync(TimeSpan.FromMinutes(30));
+            _semaphoreHeld = true;
 
-                return (result = driver.FindElement(findBy)) != null;
-            });
+            var (browser, logs) = await BrowserFixture.GetOrCreateBrowserAsync(Output, isolationContext);
+            _asyncBrowser.Value = browser;
+            _logs.Value = logs;
 
-            if (errors?.Count > 0)
-            {
-                var message =
-                    $"Encountered errors while looking for '{findBy}'." + Environment.NewLine +
-                    string.Join(Environment.NewLine, errors);
-                throw new XunitException(message);
-            }
-
-            return result;
-        }
-
-        private static bool IsError(LogEntry entry)
-        {
-            if (entry.Level < LogLevel.Severe)
-            {
-                return false;
-            }
-
-            // Don't fail if we're missing the favicon, that's not super important.
-            if (entry.Message.Contains("favicon.ico"))
-            {
-                return false;
-            }
-
-            // These two messages appear sometimes, but it doesn't actually block the tests.
-            if (entry.Message.Contains("WASM: wasm streaming compile failed: TypeError: Could not download wasm module"))
-            {
-                return false;
-            }
-            if (entry.Message.Contains("WASM: falling back to ArrayBuffer instantiation"))
-            {
-                return false;
-            }
-
-            return true;
+            Browser = browser;
         }
     }
 }
